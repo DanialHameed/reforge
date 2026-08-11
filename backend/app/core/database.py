@@ -16,20 +16,27 @@ class Base(DeclarativeBase):
 
 class GUID(TypeDecorator):
     """
-    Cross-dialect UUID type.
+    Cross-dialect UUID type — round-trips uuid.UUID objects against a
+    VARCHAR(36)/CHAR(36) column on every dialect.
 
-    - Postgres: UUID(as_uuid=True)
-    - SQLite/others: CHAR(36)
+    Every migration (001 onward) creates id/FK columns as ``String(36)`` —
+    explicitly "for SQLite compatibility" per 001's own comment — never a
+    native Postgres ``uuid`` column. This previously used
+    ``postgresql.UUID(as_uuid=True)`` as the Postgres dialect impl, which
+    made SQLAlchemy bind query parameters with an explicit ``::UUID`` cast
+    (e.g. ``WHERE users.id = $1::UUID``). Postgres has no implicit
+    varchar-to-uuid comparison operator, so that cast against the actual
+    VARCHAR(36) column failed every lookup by id with
+    ``operator does not exist: character varying = uuid`` — invisible
+    against SQLite (no type enforcement) but a hard failure on every real
+    Postgres deploy. CHAR(36) on all dialects matches what's actually in
+    the database.
     """
 
     impl = CHAR
     cache_ok = True
 
     def load_dialect_impl(self, dialect):
-        if dialect.name == "postgresql":
-            from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-
-            return dialect.type_descriptor(PG_UUID(as_uuid=True))
         return dialect.type_descriptor(CHAR(36))
 
     def process_bind_param(self, value, dialect):
