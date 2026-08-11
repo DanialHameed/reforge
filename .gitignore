@@ -50,3 +50,6 @@ backend/uploads/
 tsconfig.tsbuildinfo
 .claude/
 .tools/
+
+.vercel
+.env*

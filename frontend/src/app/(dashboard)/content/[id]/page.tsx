@@ -412,6 +412,25 @@ export default function ContentDetailPage() {
     }
   }, [id]);
 
+  /**
+   * Fetch the item immediately on mount, regardless of status.
+   *
+   * `useContentPolling`'s `onComplete` only fires once status reaches a
+   * terminal state, so `item` previously stayed null for the entire poll —
+   * up to the timeout — for anything sitting at "draft" (upload succeeded
+   * but the follow-up /process call never landed, e.g. a dropped request
+   * over a flaky connection) or still legitimately "processing". With
+   * `item` null, every action gated on `item` (Re-process, Publish, media
+   * preview) was unreachable: a draft stuck this way had no way to be
+   * retried from the UI at all. Fetching immediately shows the item and
+   * its current status right away; the poll below still takes over for
+   * live status updates.
+   */
+  useEffect(() => {
+    if (!id) return;
+    void refreshItem().finally(() => setLoading(false));
+  }, [id, refreshItem]);
+
   async function validateMedia(variantId: string) {
     try {
       const res = await api.post<{
@@ -778,7 +797,15 @@ export default function ContentDetailPage() {
           </div>
         </div>
 
-        {error ? (
+        {error === "Polling timed out" ? (
+          <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-6 text-amber-900">
+            <div className="font-semibold">Still processing</div>
+            <div className="mt-1 text-sm text-amber-800">
+              This is taking longer than usual (large videos especially). It&apos;s still running in the
+              background — refresh this page in a minute to check again.
+            </div>
+          </div>
+        ) : error ? (
           <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-6 text-rose-900">
             <div className="font-semibold">Couldn’t load content item</div>
             <div className="mt-1 text-sm text-rose-800">{error}</div>

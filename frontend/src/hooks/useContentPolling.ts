@@ -50,7 +50,14 @@ export interface PollState {
 }
 
 const POLL_INTERVALS = [1000, 1000, 2000, 2000, 3000, 5000] as const;
-const MAX_POLL_DURATION_MS = 45_000;
+// Must comfortably exceed the backend's own ceiling for the analyze task
+// (soft_time_limit=8min, time_limit=9min in content_processor.py), plus
+// headroom for queueing delay when the worker is busy. The previous 45s
+// value meant this UI declared "Couldn't load content item" on essentially
+// every real video (and many images) while the backend was still correctly
+// processing in the background — the job never actually failed, the
+// frontend just stopped watching and showed an alarming error.
+const MAX_POLL_DURATION_MS = 12 * 60 * 1000;
 const TERMINAL_STATUSES = ["completed", "completed_fallback", "error_fallback", "timeout_fallback"] as const;
 
 function isTerminalStatus(status: string | undefined): boolean {
