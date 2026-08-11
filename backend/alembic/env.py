@@ -7,7 +7,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from dotenv import load_dotenv
-from sqlalchemy import pool
+from sqlalchemy import pool, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
@@ -63,7 +63,34 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _ensure_wide_version_table(connection: Connection) -> None:
+    """
+    Alembic hardcodes `alembic_version.version_num` as VARCHAR(32) with no
+    supported override (see alembic/ddl/impl.py `version_table_impl`), and
+    only creates the table if it doesn't already exist. This project's
+    revision IDs are longer descriptive strings (e.g.
+    "006_platform_connections_and_drift" = 35 chars) — SQLite accepts them
+    silently (no length enforcement) but Postgres raises
+    StringDataRightTruncationError on the first migration that pushes past
+    32 chars. Pre-creating the table with a wider column is Alembic's own
+    documented workaround for this exact situation.
+    """
+    connection.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS alembic_version ("
+            "version_num VARCHAR(255) NOT NULL, "
+            "CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)"
+            ")"
+        )
+    )
+    # Commit this standalone statement now so it doesn't linger as an
+    # autobegun transaction that `context.begin_transaction()` below would
+    # then have to contend with.
+    connection.commit()
+
+
 def do_run_migrations(connection: Connection) -> None:
+    _ensure_wide_version_table(connection)
     context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
 
     with context.begin_transaction():

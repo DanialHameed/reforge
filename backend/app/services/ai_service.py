@@ -79,7 +79,14 @@ def _setup_metrics_logger() -> logging.Logger:
     if logger.handlers:
         return logger
     logger.setLevel(logging.INFO)
-    log_dir = Path(__file__).resolve().parents[3] / "logs"
+    # parents[2] is the app root in both layouts this runs under: locally
+    # that's `backend/` (.../backend/app/services/ai_service.py), and in the
+    # Docker image it's `/app` (Dockerfile does `COPY . /app`, flattening
+    # `backend/` itself out of the path). The previous `parents[3]` climbed
+    # one level too far in the container — landing on `/` — which the
+    # non-root `reforge` user can't write to, crashing every worker on
+    # import with a silent `PermissionError` before logging was even set up.
+    log_dir = Path(__file__).resolve().parents[2] / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     handler = RotatingFileHandler(
         filename=str(log_dir / "gemini.log"),
