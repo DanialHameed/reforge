@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 from sqlalchemy.types import CHAR, TypeDecorator
 
 from app.core.config import settings
@@ -57,7 +58,22 @@ class GUID(TypeDecorator):
         return uuid.UUID(str(value))
 
 
-_engine_kwargs: dict[str, object] = {"pool_pre_ping": True}
+# NullPool: this module-level `engine` is imported by both the FastAPI app
+# (one event loop for the process lifetime — pooling would be fine there)
+# and Celery tasks, which each run their own coroutine via
+# `asyncio.run(...)` in `app.workers.async_bridge` — a brand new event loop
+# per task. asyncpg connections are bound to the event loop that created
+# them, so a pooled connection checked out during one task's loop is unusable
+# (and un-closeable) once that loop is gone: every task after the first hit
+# "Task ... attached to a different loop" / "Event loop is closed" the
+# moment it touched the DB. That silently corrupted `content_analyze` and
+# `check_and_publish` — the Celery task itself reported "succeeded", but the
+# DB write it depended on never happened, leaving content stuck in
+# "processing" forever with no visible error. NullPool opens a fresh
+# connection per checkout and never holds one across requests/tasks, so no
+# connection ever crosses an event-loop boundary. `alembic/env.py` already
+# uses NullPool for the same reason.
+_engine_kwargs: dict[str, object] = {"pool_pre_ping": True, "poolclass": NullPool}
 if settings.DATABASE_URL.startswith("sqlite"):
     # aiosqlite runs in a threadpool; allow access across threads.
     _engine_kwargs["connect_args"] = {"check_same_thread": False}

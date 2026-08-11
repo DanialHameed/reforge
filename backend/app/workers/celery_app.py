@@ -18,6 +18,31 @@ try:
 except Exception:
     pass
 
+# Import every ORM model (mirrors alembic/env.py's list) so SQLAlchemy's
+# Base.metadata has every table registered before any task runs.
+#
+# None of app.workers.content_processor / publish_task / publisher_scheduler
+# import app.models.auth_models — the worker process, unlike the FastAPI app
+# (whose routers all import User directly or transitively), never had a
+# reason to. But ContentItem.user_id carries `ForeignKey("users.id")` as a
+# lazily-resolved string reference, and SQLAlchemy only resolves it against
+# tables whose model *classes* have actually been imported somewhere in the
+# process. Committing a ContentItem inside the worker therefore raised
+# `NoReferencedTableError: ... could not find table 'users'` on every single
+# flush — which crashed content_analyze's status update, got swallowed by a
+# bare `except Exception: logger.warning(...)` with no traceback, and left
+# every upload stuck at "processing" forever with no visible error.
+#
+# This was invisible in local/eager-mode dev: CELERY_TASK_ALWAYS_EAGER runs
+# the task inline inside the FastAPI process, which already imported User
+# via its auth routes — only a real, separately-started worker process (the
+# Docker/production setup) ever hit the empty metadata.
+from app.models import auth_models as _auth_models  # noqa: F401
+from app.models import content_orm as _content_orm  # noqa: F401
+from app.models import activity_orm as _activity_orm  # noqa: F401
+from app.models import social_orm as _social_orm  # noqa: F401
+from app.models import connection as _connection  # noqa: F401
+
 
 def _create_celery() -> Celery:
     broker = str(settings.CELERY_BROKER_URL).strip()
