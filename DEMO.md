@@ -27,7 +27,7 @@ Open `http://localhost:3000` → land on `/login`. Sign in with the seeded user:
 
 | Email | Password |
 |---|---|
-| `demo@reforge.local` | `ReForge!Demo123` |
+| `demo@reforge.dev` | `ReForge!Demo123` |
 
 You will land on `/dashboard` with 6 content items, 20 platform variants, and a populated activity feed. The Queue page shows scheduled items; the Analytics page shows non-empty charts because the seed includes published variants spanning the last 30 days.
 
@@ -171,7 +171,7 @@ GeminiService ──► (success) ──► AIProviderResult{ provider="gemini" 
 ## 8. Demo evaluator journey (in order)
 
 1. Visit `/` → auto-redirects to `/login` (or `/dashboard` if a session exists).
-2. Sign in as `demo@reforge.local` / `ReForge!Demo123`.
+2. Sign in as `demo@reforge.dev` / `ReForge!Demo123`.
 3. **Dashboard** — three stat cards (processing / drafts / scheduled) + the recent-content table.
 4. **Content** — list of 6 items mixed across `published` / `scheduled` / `draft`.
 5. **Content detail** (click any row) — see the AI-generated platform variants with editable captions, per-platform publish buttons, and the **Publish All** action.

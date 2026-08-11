@@ -7,7 +7,7 @@ Usage (from the ``backend/`` directory):
 
 What it creates / refreshes (idempotent — safe to re-run):
 
-    * A demo user:   demo@reforge.local  /  ReForge!Demo123
+    * A demo user:   demo@reforge.dev  /  ReForge!Demo123
     * 6 ContentItems with distinct titles, statuses, and timestamps so
       the dashboard, content list, and queue all have something to show.
     * Per-content PlatformVariants for instagram, twitter, linkedin,
@@ -68,7 +68,10 @@ logging.basicConfig(
 )
 
 
-DEMO_EMAIL = "demo@reforge.local"
+# NOT .local/.test/.example/.invalid — email-validator (used by the /auth/login
+# EmailStr schema) unconditionally rejects those as IANA special-use domains,
+# which made the seeded demo account unable to log in via the real API.
+DEMO_EMAIL = "demo@reforge.dev"
 DEMO_PASSWORD = "ReForge!Demo123"
 DEMO_DISPLAY_NAME = "Demo Account"
 

@@ -44,3 +44,7 @@ pnpm-debug.log*
 *.sqlite3
 uploads/
 backend/uploads/
+
+# Build caches / local-machine-only tooling config
+tsconfig.tsbuildinfo
+.claude/

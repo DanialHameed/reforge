@@ -67,7 +67,7 @@ async def test_seed_creates_demo_user(
             await db.execute(select(User).where(User.email == seed_demo_data.DEMO_EMAIL))
         ).scalar_one_or_none()
         assert user is not None
-        assert user.email == "demo@reforge.local"
+        assert user.email == "demo@reforge.dev"
         assert user.hashed_password  # was actually hashed, not stored plain
 
 

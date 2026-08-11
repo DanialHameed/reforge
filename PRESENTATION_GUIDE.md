@@ -8,7 +8,7 @@ Use this script for a confident, stable demo. **Evaluation mode** (optional): se
 
 1. **Open the app** — `http://localhost:3000` (or your deployed URL). You should land on **Login** (or Dashboard if already signed in).
 2. **Sign in** — Use seeded demo user after running `python backend/scripts/seed_demo_data.py`:  
-   **demo@reforge.local** / **ReForge!Demo123**
+   **demo@reforge.dev** / **ReForge!Demo123**
 3. **Dashboard** (`/dashboard`) — Point to the three stat cards and **Recent Content** table. Click **Upload** or **View all**.
 4. **Content** (`/content`) — Show mixed statuses (draft / scheduled / published). Open any row (**Open**).
 5. **Content detail** (`/content/{id}`) — Scroll platform cards: captions, hashtags, per-platform **Publish** (if connected), **Publish all**, **Select platforms** for selective publish. Mention AI-generated vs edited captions.
