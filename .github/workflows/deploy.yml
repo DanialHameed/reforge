@@ -1,0 +1,82 @@
+name: Deploy (docker compose)
+
+on:
+  push:
+    branches: ["main"]
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build artifacts (optional smoke)
+        run: |
+          echo "Repo checked out. Deployment will build on server."
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # P-1 / P-9 fix: this script now references the real
+          # docker-compose.prod.yml (no longer phantom) AND runs
+          # `alembic upgrade head` inside the freshly-built API image
+          # before bringing the long-lived services up. If migrations
+          # fail the script exits non-zero (set -euo pipefail) and the
+          # old containers keep serving traffic.
+          script: |
+            set -euo pipefail
+
+            APP_DIR=${{ secrets.DEPLOY_APP_DIR }}
+            if [ -z "$APP_DIR" ]; then APP_DIR="/opt/reforge"; fi
+            mkdir -p "$APP_DIR"
+            cd "$APP_DIR"
+
+            # --- 1. Pull latest source ---------------------------------------
+            if [ ! -d ".git" ]; then
+              git clone --depth 1 "${{ github.server_url }}/${{ github.repository }}.git" .
+            else
+              git fetch --all --prune
+              git reset --hard "origin/main"
+            fi
+
+            # --- 2. Pre-flight: required files -------------------------------
+            if [ ! -f ".env" ]; then
+              echo "ERROR: missing .env on server. Create one from .env.production.example."
+              exit 1
+            fi
+            if [ ! -f "docker-compose.prod.yml" ]; then
+              echo "ERROR: docker-compose.prod.yml missing in checkout."
+              exit 1
+            fi
+
+            COMPOSE="docker compose --env-file .env -f docker-compose.prod.yml"
+
+            # --- 3. Build images first (so migrations run on the new code) ---
+            $COMPOSE build api worker beat
+
+            # --- 4. Bring infra up & wait for health -------------------------
+            $COMPOSE up -d postgres redis
+
+            # Wait up to ~120s for Postgres to be healthy. `--wait` blocks
+            # until depends_on healthchecks pass.
+            $COMPOSE up -d --wait postgres redis
+
+            # --- 5. Run database migrations on the new image -----------------
+            # Uses `run --rm` so the migration container disappears after
+            # success and leaves no orphaned pid. If alembic exits non-zero,
+            # `set -e` aborts the deploy and old containers keep running.
+            $COMPOSE run --rm api alembic upgrade head
+
+            # --- 6. Replace api/worker/beat in-place -------------------------
+            $COMPOSE up -d --remove-orphans api worker beat
+
+            # --- 7. Cleanup --------------------------------------------------
+            docker image prune -f || true

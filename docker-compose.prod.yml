@@ -1,0 +1,198 @@
+# Production stack for ReForge.
+#
+# Closes the deployment blockers identified in the audit (P-1, P-2, P-5,
+# P-6, P-8, P-9):
+#   * P-1: this file is what `.github/workflows/deploy.yml` references.
+#   * P-2: real Postgres, Redis with persistence, Celery beat scheduler,
+#          named volumes for DB/Redis/uploads — i.e. a real production stack
+#          rather than the dev compose hack.
+#   * P-5: api/worker/beat all set ENV=production explicitly so the in-code
+#          eager-mode shortcut (`settings.ENV == "local"`) cannot fire.
+#   * P-6: bind-mountable named volume for the local `uploads/` fallback so
+#          files survive container restarts when Cloudinary is not used.
+#   * P-8: worker uses --pool=prefork --concurrency=4 (override via
+#          CELERY_CONCURRENCY); beat is a separate service.
+#   * P-9: paired with deploy.yml which now runs `alembic upgrade head`
+#          before bringing services up.
+#
+# Operators MUST provide a real .env at the repository root. Required keys
+# are documented in .env.production.example.
+
+services:
+  # ---------------------------------------------------------------------------
+  # Postgres
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-reforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-reforge}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-reforge} -d ${POSTGRES_DB:-reforge}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Redis (Celery broker + result backend, AOF for crash safety)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # FastAPI app
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ENV: production
+      CELERY_TASK_ALWAYS_EAGER: "false"
+      CELERY_ALWAYS_EAGER: "false"
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-reforge}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-reforge}}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Internal expose only; nginx is the single ingress. Operators that
+    # want to bypass nginx (e.g. for direct curl during incident response)
+    # can override this with the ``API_PORT`` env var on the host.
+    expose:
+      - "8000"
+    ports:
+      - "${API_PORT:-127.0.0.1:8000}:8000"
+    volumes:
+      - uploads_data:/app/uploads
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "${UVICORN_WORKERS:-2}"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status == 200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # Celery worker (prefork pool — P-8 fix)
+  # ---------------------------------------------------------------------------
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ENV: production
+      CELERY_TASK_ALWAYS_EAGER: "false"
+      CELERY_ALWAYS_EAGER: "false"
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-reforge}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-reforge}}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/uploads
+    command: >
+      celery -A app.workers.celery_app worker
+      --loglevel=info
+      --pool=prefork
+      --concurrency=${CELERY_CONCURRENCY:-4}
+      --queues=high_priority,default,low_priority
+      --max-tasks-per-child=100
+    healthcheck:
+      # `celery inspect ping` returns non-zero if no worker responds within 10s.
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d celery@$$HOSTNAME --timeout 10 || exit 1"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
+
+  # ---------------------------------------------------------------------------
+  # Celery beat scheduler — required for `reforge.check_and_publish` (P-2)
+  # Single replica only; running multiple beat instances will duplicate jobs.
+  # ---------------------------------------------------------------------------
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ENV: production
+      CELERY_TASK_ALWAYS_EAGER: "false"
+      CELERY_ALWAYS_EAGER: "false"
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-reforge}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-reforge}}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - beat_schedule:/app/beat
+    command: >
+      celery -A app.workers.celery_app beat
+      --loglevel=info
+      --schedule=/app/beat/celerybeat-schedule
+
+  # ---------------------------------------------------------------------------
+  # Nginx reverse proxy (sole public ingress)
+  #
+  # Terminates HTTP at the edge, applies a 2 GB request-body ceiling that
+  # mirrors the application's hard upload cap, sets defense-in-depth
+  # security headers, rate-limits the auth surface, and proxies everything
+  # under /api to the FastAPI service. TLS is intentionally not modeled
+  # here — operators terminate TLS at a managed LB or extend this service
+  # with Certbot. The conf is mounted read-only so config changes require
+  # a deliberate restart, not a write inside the running container.
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${NGINX_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
+  beat_schedule:
