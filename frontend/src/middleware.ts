@@ -27,7 +27,7 @@ export function middleware(req: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|ingest-reforge/).*)",
+    "/((?!_next/static|_next/image|favicon.ico|favicon-32.png|apple-touch-icon.png|icon-192.png|icon-512.png|icon-512-maskable.png|manifest.json|robots.txt|sitemap.xml|ingest-reforge/).*)",
   ],
 };
 
