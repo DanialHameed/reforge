@@ -112,8 +112,16 @@ def _upload_to_cloudinary(path: str, resource_type: str) -> dict[str, Any]:
 
 
 def _uploads_dir() -> str:
-    # backend/app/api/v1/content.py -> backend/uploads
-    return str(Path(__file__).resolve().parents[4] / "uploads")
+    # parents[3] is the app root in both layouts this runs under: locally
+    # that's `backend/` (.../backend/app/api/v1/content.py), and in the
+    # Docker image it's `/app` (Dockerfile does `COPY . /app`, flattening
+    # `backend/` out of the path — it also pre-creates `/app/uploads` and
+    # docker-compose.prod.yml mounts a volume there). The previous
+    # `parents[4]` climbed one level too far in the container — landing on
+    # `/` — which the non-root `reforge` user can't write to, crashing
+    # every upload with a `PermissionError` (same class of bug as the
+    # `/logs` path in ai_service.py).
+    return str(Path(__file__).resolve().parents[3] / "uploads")
 
 
 def _ensure_uploads_dir() -> str:

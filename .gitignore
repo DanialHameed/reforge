@@ -49,3 +49,4 @@ backend/uploads/
 # Build caches / local-machine-only tooling config
 tsconfig.tsbuildinfo
 .claude/
+.tools/
